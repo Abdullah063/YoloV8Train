@@ -1,75 +1,92 @@
 import os
 import glob
 from collections import defaultdict
-import re
+from pathlib import Path
 
 
-def analyze_dataset(base_dir):
-    """Veri setindeki sınıfları detaylı analiz eder"""
-    label_dirs = ['labels/train', 'labels/val', 'labels/test']
-    class_stats = defaultdict(lambda: {
-        'count': 0,
-        'files': set(),
-        'names': set(),
-        'splits': defaultdict(int)
-    })
+def summarize_dataset(base_dir):
+    """
+    Veri seti istatistiklerini özetler
+    Args:
+        base_dir: Veri setinin ana dizini
+    """
+    stats = {
+        'images': defaultdict(int),
+        'labels': defaultdict(int),
+        'classes': set(),
+        'class_distribution': defaultdict(lambda: defaultdict(int))
+    }
 
-    # Dosya isimlerinden sınıf isimlerini çıkarmak için regex
-    name_pattern = re.compile(r'_([a-zA-Z]+)_')
+    # Her split için istatistikleri topla
+    for split in ['train', 'val', 'test']:
+        # Görüntü sayıları
+        img_path = os.path.join(base_dir, split, 'images')
+        if os.path.exists(img_path):
+            image_files = glob.glob(os.path.join(img_path, '*.*'))
+            stats['images'][split] = len([f for f in image_files
+                                          if Path(f).suffix.lower() in ['.jpg', '.jpeg', '.png']])
 
-    total_files = 0
-    for label_dir in label_dirs:
-        dir_path = os.path.join(base_dir, label_dir)
-        if not os.path.exists(dir_path):
-            continue
+        # Etiket sayıları ve sınıf dağılımı
+        label_path = os.path.join(base_dir, split, 'labels')
+        if os.path.exists(label_path):
+            label_files = glob.glob(os.path.join(label_path, '*.txt'))
+            stats['labels'][split] = len(label_files)
 
-        split_name = label_dir.split('/')[-1]
+            # Her bir etiket dosyasını oku ve sınıfları say
+            for label_file in label_files:
+                try:
+                    with open(label_file, 'r') as f:
+                        for line in f:
+                            class_id = int(line.strip().split()[0])
+                            stats['classes'].add(class_id)
+                            stats['class_distribution'][split][class_id] += 1
+                except Exception as e:
+                    print(f"Hata - {label_file}: {str(e)}")
 
-        for label_file in glob.glob(os.path.join(dir_path, '*.txt')):
-            total_files += 1
-            try:
-                # Dosya isminden sınıf ismini çıkar
-                filename = os.path.basename(label_file)
-                name_match = name_pattern.search(filename)
-                if name_match:
-                    class_name = name_match.group(1).lower()
+    # YAML dosyasını kontrol et
+    yaml_path = os.path.join(base_dir, 'dataset.yaml')
+    yaml_status = "✅ Mevcut" if os.path.exists(yaml_path) else "❌ Eksik"
 
-                with open(label_file, 'r') as f:
-                    for line in f:
-                        parts = line.strip().split()
-                        if parts:
-                            class_id = int(parts[0])
-                            stats = class_stats[class_id]
-                            stats['count'] += 1
-                            stats['files'].add(filename)
-                            if name_match:
-                                stats['names'].add(class_name)
-                            stats['splits'][split_name] += 1
+    # Sonuçları yazdır
+    print("\n=== VERİ SETİ ÖZETİ ===")
+    print(f"\ndataset.yaml durumu: {yaml_status}")
 
-            except Exception as e:
-                print(f"Hata - {label_file}: {str(e)}")
+    print("\nGörüntü Sayıları:")
+    print("-" * 30)
+    total_images = 0
+    for split, count in stats['images'].items():
+        print(f"{split:>5}: {count:>5} görüntü")
+        total_images += count
+    print(f"TOPLAM: {total_images} görüntü")
 
-    print("\n=== VERI SETI SINIF ANALIZI ===")
-    print(f"\nToplam dosya sayısı: {total_files}")
-    print(f"Toplam benzersiz sınıf sayısı: {len(class_stats)}")
+    print("\nEtiket Sayıları:")
+    print("-" * 30)
+    total_labels = 0
+    for split, count in stats['labels'].items():
+        print(f"{split:>5}: {count:>5} etiket")
+        total_labels += count
+    print(f"TOPLAM: {total_labels} etiket")
 
-    print("\nSINIF DETAYLARI:")
-    print("-" * 50)
-    for class_id, stats in sorted(class_stats.items()):
-        print(f"\nSınıf ID: {class_id}")
-        print(f"Toplam örnek sayısı: {stats['count']}")
-        print(f"Benzersiz dosya sayısı: {len(stats['files'])}")
-        if stats['names']:
-            print(f"Tespit edilen sınıf isimleri: {', '.join(sorted(stats['names']))}")
-        print("\nVeri seti dağılımı:")
-        for split, count in stats['splits'].items():
-            print(f"- {split}: {count} örnek")
-        print(f"Örnek dosyalar: {', '.join(list(stats['files'])[:3])}...")
-        print("-" * 50)
+    print("\nBenzersiz Sınıf Sayısı:", len(stats['classes']))
+    print("Sınıf ID'leri:", sorted(list(stats['classes'])))
 
-    return class_stats
+    print("\nSınıf Dağılımı:")
+    print("-" * 30)
+    for split in ['train', 'val', 'test']:
+        if stats['class_distribution'][split]:
+            print(f"\n{split} seti sınıf dağılımı:")
+            for class_id in sorted(stats['class_distribution'][split].keys()):
+                count = stats['class_distribution'][split][class_id]
+                print(f"  Sınıf {class_id}: {count} örnek")
+
+    # Uyarılar
+    if total_images != total_labels:
+        print("\n⚠️ UYARI: Görüntü ve etiket sayıları eşleşmiyor!")
+        for split in ['train', 'val', 'test']:
+            if stats['images'][split] != stats['labels'][split]:
+                print(f"  - {split} setinde: {stats['images'][split]} görüntü, {stats['labels'][split]} etiket")
 
 
 if __name__ == "__main__":
-    base_dir = '/Users/altun/Desktop/lostProject/DataSet/dataSet2/obj'
-    analyze_dataset(base_dir)
+    base_dir = '/Users/altun/Desktop/lostProject/DataSet/dataSet2/obj'  # Kendi dizin yolunuzu buraya yazın
+    summarize_dataset(base_dir)

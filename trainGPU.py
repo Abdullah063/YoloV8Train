@@ -213,7 +213,7 @@ def train_yolov8(config_path, device):
         # Eğitim parametreleri
         results = model.train(
             data=config_path,
-            epochs=100,  # Epoch sayısı
+            epochs=50,  # Epoch sayısı
             imgsz=640,  # Görüntü boyutu
             batch=8,  # Batch size
             name='fruit_detection_final',
